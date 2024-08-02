@@ -244,7 +244,7 @@ sensor:
     id: wifi_pct
     update_interval: 60s
     unit_of_measurement: "%"
-    icon: "mdi:air-filter"
+    icon: "mdi:wifi-strength-outline"
     accuracy_decimals: 0
     lambda: |-
       if (id(wifi_dbm).state <= -100.0) {
