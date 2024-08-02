@@ -12,7 +12,6 @@
 #  unit_name: "<string>"                      # printed on boot screen
 #  api_encryption_key: "<string>"             # home assistant api component
 #  esphome_ota_password: "<string>"           # esphome ota component
-#  hostpotpassword: "<string>"                # fallback hotspot component
 #  voc_learning_time_offset_hours: "<string>" # 12, 60, 120, 360, 720 are suggested values from AirGradient (range 1..1000)
 #  nox_learning_time_offset_hours: "<string>" # 12, 60, 120, 360, 720 are suggested values from AirGradient (range 1..1000)
 
