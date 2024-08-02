@@ -50,11 +50,10 @@ ota:
   - platform: esphome
     password: $esphome_ota_password
 
-# Remote packages cannot have secret lookups in them.
-#wifi:
-#  # https://esphome.io/components/wifi.html
-#  ssid: !secret wifi_ssid
-#  password: !secret wifi_password
+wifi:
+# https://esphome.io/components/wifi.html
+#  ssid: !secret wifi_ssid # Remote packages cannot have secret lookups in them.
+#  password: !secret wifi_password # Remote packages cannot have secret lookups in them.
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
