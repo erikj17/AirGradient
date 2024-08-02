@@ -1,0 +1,494 @@
+# Airgradient Pro presoldered edition (V3.3)
+# https://www.airgradient.com/open-airgradient/instructions/overview/
+# D1 mini v4.0.0 with usb c port
+
+# Main yaml must have the following substitutions defined.
+# Main yaml must call this file via esphome 'packages' component
+# https://esphome.io/guides/configuration-types.html?highlight=packages#packages
+#substitutions:
+#  devicename: "<string>"                     # esphome component
+#  upper_devicename: "<string>"               # esphome component
+#  config_version: "<string>"                 # printed on boot screen
+#  unit_name: "<string>"                      # printed on boot screen
+#  api_encryption_key: "<string>"             # home assistant api component
+#  esphome_ota_password: "<string>"           # esphome ota component
+#  hostpotpassword: "<string>"                # fallback hotspot component
+#  voc_learning_time_offset_hours: "<string>" # 12, 60, 120, 360, 720 are suggested values from AirGradient (range 1..1000)
+#  nox_learning_time_offset_hours: "<string>" # 12, 60, 120, 360, 720 are suggested values from AirGradient (range 1..1000)
+
+esphome:
+  name: $devicename
+  friendly_name: $upper_devicename
+
+esp8266:
+  # https://esphome.io/components/esp8266
+  board: d1_mini
+  #                  _________
+  #                 /         \
+  # RST            |           | 1 - TX
+  # A0             |           | 3 - RX
+  # 16 - D0        |           | 5 - D1 (I2C SCL)
+  # 14 - D5 (SCK)  |           | 4 - D2 (I2C SDA)
+  # 12 - D6 (MISO) |           | 0 - D3
+  # 13 - D7 (MOSI) |           | 2 - D4
+  # 15 - D8        |           | GND
+  # 3V3            |___________| VBUS
+  # 
+
+# Enable logging
+logger:
+  # https://esphome.io/components/logger.html
+
+# Enable Home Assistant API
+api:
+  # https://esphome.io/components/api.html
+  encryption:
+    key: $api_encryption_key
+
+ota:
+  # https://esphome.io/components/ota/
+  - platform: esphome
+    password: $esphome_ota_password
+
+wifi:
+  # https://esphome.io/components/wifi.html
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "${devicename}-hotspot"
+    password: $hostpotpassword
+
+# The captive portal is a fallback mechanism for when connecting to the configured WiFi fails.
+captive_portal:
+  # https://esphome.io/components/captive_portal.html
+
+switch:
+  # https://esphome.io/components/switch/
+  # https://esphome.io/components/switch/safe_mode.html
+  - platform: safe_mode
+    name: "Flash Mode (Safe Mode)"
+    icon: "mdi:cellphone-arrow-down"
+    
+  - platform: template
+    name: "Display Boot Page"
+    id: display_boot_page
+    restore_mode: ALWAYS_ON
+    optimistic: True
+    entity_category: config
+    icon: "mdi:monitor" 
+
+button:
+  # https://esphome.io/components/button/
+  # https://esphome.io/components/button/restart.html
+  - platform: restart
+    name: "Reboot"
+
+number:
+  - platform: template
+    # https://esphome.io/components/number/template.html
+    name: "Display Contrast %"
+    icon: "mdi:lightbulb"
+    id: display_contrast
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    optimistic: true
+    restore_value: true
+    mode: slider
+    on_value:
+      then:
+        # https://www.reddit.com/r/Esphome/comments/sy1d1s/how_to_write_a_lamba_to_change_the_contrast_of/
+        lambda: id(oled).set_contrast(id(display_contrast).state / 100.0);
+
+
+
+
+i2c:
+  # https://esphome.io/components/i2c
+  sda: D2
+  scl: D1
+  frequency: 400kHz # Default is 50kHz. 400kHz eliminates warnings about components taking a long time other than SGP40 component: https://github.com/esphome/issues/issues/4717
+
+
+uart:
+  # https://esphome.io/components/uart.html
+  - rx_pin: D5
+    tx_pin: D6
+    baud_rate: 9600
+    id: pms_uart
+
+  - rx_pin: D4
+    tx_pin: D3
+    baud_rate: 9600
+    id: co2_uart
+
+sensor:
+  # https://esphome.io/components/sensor/#config-sensor
+  - platform: pmsx003
+    # https://esphome.io/components/sensor/pmsx003.html
+    type: PMSX003
+    uart_id: pms_uart
+    pm_2_5:
+      id: pm_2_5
+      name: "PM 2.5"
+      filters:
+        - lambda: |-
+            float result = 0.0;
+            if (x == 0.0) {
+              result = 0.0;
+            } else if (x < 30.0) {
+              result = (0.524 * x) - (0.0862 * id(humidity).state) + 5.75;
+            } else if (x < 50.0) {
+              result = (0.786 * (x / 20 - 3/2) + 0.524 * (1 - (x / 20 - 3/2))) * x - (0.0862 * id(humidity).state) + 5.75;
+            } else if (x < 210.0) {
+              result = (0.786 * x) - (0.0862 * id(humidity).state) + 5.75;
+            } else if (x < 260.0) {
+              result = (0.69 * (x / 50 - 21/5) + 0.786 * (1 - (x / 50 - 21/5))) * x - (0.0862 * id(humidity).state * (1 - (x / 50 - 21/5))) + (2.966 * (x / 50 - 21/5)) + (5.75 * (1 - (x / 50 - 21/5))) + (8.84 * pow(10,-4) * pow(x,2) * (x / 50 - 21/5));
+            } else {
+              result = 2.966 + (0.69 * x) + (8.84 * pow(10,-4) * pow(x,2));
+            }
+            if (result <= 0.0) {
+              return 0.0;
+            } else {
+              return result;
+            }
+    update_interval: 120s
+
+  - platform: template
+    # https://esphome.io/components/sensor/template.html
+    id: pm25_aqi
+    name: "PM 2.5 AQI"
+    update_interval: 120s
+    unit_of_measurement: "AQI"
+    icon: "mdi:air-filter"
+    accuracy_decimals: 0
+    lambda: |-
+      // https://en.wikipedia.org/wiki/Air_quality_index#Computing_the_AQI
+      // Borrowed from https://github.com/kylemanna/sniffer/blob/master/esphome/sniffer_common.yaml
+      // set to -1 if no valid pm2.5 data
+      if (isnan(id(pm_2_5).state)) {
+        return(-1);
+      } else {
+        if (id(pm_2_5).state <= 12.0) {
+          // good
+          return((50.0 - 0.0) / (12.0 - 0.0) * (id(pm_2_5).state - 0.0) + 0.0);
+        } else if (id(pm_2_5).state <= 35.4) {
+          // moderate
+          return((100.0 - 51.0) / (35.4 - 12.1) * (id(pm_2_5).state - 12.1) + 51.0);
+        } else if (id(pm_2_5).state <= 55.4) {
+          // usg
+          return((150.0 - 101.0) / (55.4 - 35.5) * (id(pm_2_5).state - 35.5) + 101.0);
+        } else if (id(pm_2_5).state <= 150.4) {
+          // unhealthy
+          return((200.0 - 151.0) / (150.4 - 55.5) * (id(pm_2_5).state - 55.5) + 151.0);
+        } else if (id(pm_2_5).state <= 250.4) {
+          // very unhealthy
+          return((300.0 - 201.0) / (250.4 - 150.5) * (id(pm_2_5).state - 150.5) + 201.0);
+        } else if (id(pm_2_5).state <= 350.4) {
+          // hazardous
+          return((400.0 - 301.0) / (350.4 - 250.5) * (id(pm_2_5).state - 250.5) + 301.0);
+        } else if (id(pm_2_5).state <= 500.4) {
+          // hazardous 2
+          return((500.0 - 401.0) / (500.4 - 350.5) * (id(pm_2_5).state - 350.5) + 401.0);
+        } else {
+          return(500);
+        }
+      }
+
+  - platform: senseair
+    # https://esphome.io/components/sensor/senseair
+    # https://senseair.com/products/size-counts/s8-lp
+    # Output: 0-2000ppm
+    uart_id: co2_uart
+    co2:
+      id: co2
+      name: "CO2"
+      filters:
+        - skip_initial: 2
+        - clamp:
+            min_value: 400
+    update_interval: 60s
+
+  - platform: sht3xd
+  # https://esphome.io/components/sensor/sht3xd
+    temperature:
+      id: temp
+      name: "Temperature"
+    humidity:
+      id: humidity
+      name: "Humidity"
+    address: 0x44
+    update_interval: 10s
+    heater_enabled: false
+
+  - platform: sgp4x
+    # https://esphome.io/components/sensor/sgp4x
+    # Output: 0-500 VOC Index, 0-500 NOx Index
+    voc:
+      name: "VOC Index"
+      id: voc_index
+      algorithm_tuning:
+        # 12, 60, 120, 360, 720 are suggested values from AirGradient (range 1..1000)
+        learning_time_offset_hours: $voc_learning_time_offset_hours
+    nox:
+      name: "NOx Index"
+      id: nox_index
+      algorithm_tuning:
+        # 12, 60, 120, 360, 720 are suggested values from AirGradient (range 1..1000)
+        learning_time_offset_hours: $nox_learning_time_offset_hours
+    compensation:
+      temperature_source: temp
+      humidity_source: humidity
+      
+  - platform: wifi_signal
+    # https://esphome.io/components/sensor/wifi_signal.html
+    name: "WiFi Signal"
+    id: wifi_dbm
+    update_interval: 60s
+
+  - platform: template
+    # https://esphome.io/components/sensor/template.html
+    name: "WiFi Signal Pct"
+    id: wifi_pct
+    update_interval: 60s
+    unit_of_measurement: "%"
+    icon: "mdi:air-filter"
+    accuracy_decimals: 0
+    lambda: |-
+      if (id(wifi_dbm).state <= -100.0) {
+        return(0);
+      } else if (id(wifi_dbm).state >= -50.0) {
+        return(100);
+      } else {
+        return(2 * (id(wifi_dbm).state + 100));
+      }
+
+  - platform: uptime
+    # https://esphome.io/components/sensor/uptime.html
+    name: "Uptime"
+    id: device_uptime
+    update_interval: 10s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "ESP IP Address"
+      id: esp_ip_address
+      icon: mdi:ip-network
+
+
+font:
+  # https://esphome.io/components/display/fonts.html
+  # Google fonts: https://fonts.google.com/
+  # Weight:
+  #   thin:        100
+  #   extra-light: 200
+  #   light:       300
+  #   regular:     400 (default)
+  #   medium:      500
+  #   semi-bold:   600
+  #   bold:        700
+  #   extra-bold:  800
+  #   black:       900
+
+  - file: "gfonts://Roboto"
+    id: font_roboto_12
+    size: 12
+    glyphs: '<>!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+
+  - file: "gfonts://Roboto"
+    id: font_roboto_14
+    size: 14
+    glyphs: '<>!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+
+  - file: "gfonts://Roboto"
+    id: font_roboto_26
+    size: 26
+    glyphs: '<>!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+
+  - file: "gfonts://Material+Symbols+Outlined"
+    # https://fonts.google.com/icons
+    id: icons_32
+    size: 32
+    glyphs: [
+      "\U0000e846", # thermometer
+      "\U0000f87e", # humidity_percentage
+      "\U0000f558", # humidity_indoor
+      "\U0000f084", # water
+      "\U0000e7b0", # co2
+      "\U0000f55b", # aq_indoor
+      "\U0000f55a", # aq
+      "\U0000f537", # heat
+      "\U0000e63e", # wifi
+      "\U0000eabd" # unknown_med
+     ]
+
+display:
+  # https://esphome.io/components/display/ssd1306
+  # https://esphome.io/components/display/#display-pages
+  # https://esphome.io/components/display/#formatted-text
+  # TextAlign: https://esphome.io/api/namespaceesphome_1_1display
+  - platform: ssd1306_i2c
+    id: oled
+    address: 0x3c
+    rotation: 180°
+    model: "SH1106 128x64"
+    pages:
+      - id: page_boot
+        lambda: |-
+          it.printf(0,   0,  id(font_roboto_14), TextAlign::TOP_LEFT, "Serial: %s", get_mac_address().substr(6,11).c_str());
+          it.printf(0,   17, id(font_roboto_14), TextAlign::TOP_LEFT, "Unit: $devicename");
+          it.printf(0,   34, id(font_roboto_14), TextAlign::TOP_LEFT, "Config: $config_version");
+
+      - id: page_temp_humid # Temp/Humidity
+        lambda: |-
+          // Temp icon
+          it.printf(16,  16, id(icons_32),       TextAlign::CENTER,       "\U0000e846");
+          // Temp readout units
+          it.printf(94,  16, id(font_roboto_26), TextAlign::CENTER_LEFT, "°F");
+          // Temp readout value
+          if (isnan(id(temp).state)) {
+            it.printf(94, 16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "--");
+          } else {
+            it.printf(94, 16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "%.1f", id(temp).state*9/5+32);
+          }
+          // Humidity icon
+          it.printf(16,  48, id(icons_32),       TextAlign::CENTER,       "\U0000f084");
+          // Humidity readout units
+          it.printf(94,  48, id(font_roboto_26), TextAlign::CENTER_LEFT, "%%");
+          // Humidity readout value
+          if (isnan(id(humidity).state)) {
+            it.printf(94, 48, id(font_roboto_26), TextAlign::CENTER_RIGHT, "--");
+          } else {
+            it.printf(94, 48, id(font_roboto_26), TextAlign::CENTER_RIGHT, "%.1f", id(humidity).state);
+          }
+      - id: page_co2 # CO2
+        lambda: |-
+          // CO2 icon
+          it.printf(16,  16, id(icons_32),       TextAlign::CENTER,       "\U0000e7b0");
+          // CO2 readout units
+          it.printf(94, 19, id(font_roboto_14), TextAlign::CENTER_LEFT, "ppm");
+          // CO2 readout value
+          if (isnan(id(co2).state)) {
+            it.printf(92, 16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "----");
+          } else {
+            it.printf(92, 16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "%.0f", id(co2).state);
+            // CO2 range string
+            if (id(co2).state > 2000.0) {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "VERY HIGH: > 5000"); 
+            } else if (id(co2).state > 1000.0) {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "HIGH: 2000-5000");
+            } else if (id(co2).state > 400.0) {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "NORMAL: 400-1000");
+            } else {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "GOOD: < 400");
+            }
+          }
+      - id: page_aq # AQ
+        lambda: |-
+          // Air Quality Icon
+          it.printf(16,  16, id(icons_32),       TextAlign::CENTER,       "\U0000f55a");
+          // PM2.5 readout units
+          it.printf(85,  19, id(font_roboto_14), TextAlign::CENTER_LEFT, "µg/m³");
+          // PM2.5 readout
+          if (isnan(id(pm_2_5).state)) {
+            it.printf(83,  16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "--");
+          } else {
+            it.printf(83,  16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "%.0f", id(pm_2_5).state);
+          }
+          // AQI readout 
+          if (id(pm25_aqi).state < 0.0) {
+            it.printf(64,  38, id(font_roboto_14), TextAlign::CENTER,       "AQI: ---");
+          } else {
+            it.printf(64,  38, id(font_roboto_14), TextAlign::CENTER,       "AQI: %.0f",   id(pm25_aqi).state);
+            // AQI range string
+            // Hazardous
+            if (id(pm25_aqi).state > 300.0) {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "HAZARDOUS : > 300");
+            // Very Unhealthy
+            } else if (id(pm25_aqi).state > 200.0) {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "V UNHEALTHY : 201-300");
+            // Unhealthy
+            } else if (id(pm25_aqi).state > 150.0) {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "UNHEALTHY : 151-200");
+            // Unhealthy for Sensitive Groups
+            } else if (id(pm25_aqi).state > 100.0) {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "SENSITIVE : 101-150");
+            // Moderate
+            } else if (id(pm25_aqi).state > 50.0) {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "MODERATE : 51-100");
+            // Good
+            } else {
+              it.printf(64,  64, id(font_roboto_12), TextAlign::BOTTOM_CENTER, "GOOD : < 50");
+            }
+          }
+      - id: page_tvoc_nox # TVOC/NOX
+        lambda: |-
+          // TVOC-NOx icon
+          it.printf(16,  16, id(icons_32),       TextAlign::CENTER,       "\U0000f537");
+          // TVOC readout units
+          it.printf(90, 19, id(font_roboto_14), TextAlign::CENTER_LEFT, "TVOC");
+          // TVOC readout
+          if (isnan(id(voc_index).state)) {
+            it.printf(88, 16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "---");
+          } else {
+            it.printf(88, 16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "%.0f", id(voc_index).state);
+          }
+          // NOx readout units
+          it.printf(90, 51, id(font_roboto_14), TextAlign::CENTER_LEFT, "NOx"); 
+          // NOx readout
+          if (isnan(id(nox_index).state)) {
+            it.printf(88, 48, id(font_roboto_26), TextAlign::CENTER_RIGHT, "---");
+          } else {
+            it.printf(88, 48, id(font_roboto_26), TextAlign::CENTER_RIGHT, "%.0f", id(nox_index).state);
+          }
+          
+      - id: page_wifi # WiFi
+        lambda: |-
+          // WiFi icon
+          it.printf(16,  16, id(icons_32),       TextAlign::CENTER,       "\U0000e63e");
+          // WiFi Signal Strength readout units
+          it.printf(100, 16, id(font_roboto_26), TextAlign::CENTER_LEFT, "%%");
+          // WiFi Signal Strength readout
+          if (isnan(id(wifi_pct).state)) {
+            it.printf(100, 16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "--");
+          } else {
+            it.printf(100, 16, id(font_roboto_26), TextAlign::CENTER_RIGHT, "%.0f", id(wifi_pct).state);
+          }
+          // Device Name readout
+          it.printf(64,  38, id(font_roboto_14), TextAlign::CENTER,       "$devicename");
+          // IP Address readout
+          it.printf(64,  64, id(font_roboto_14), TextAlign::BOTTOM_CENTER,"%s", id(esp_ip_address).state.c_str());
+
+    on_page_change:
+      to: page_boot
+      then:
+        - if:
+            # Skip the boot page after initial boot
+            condition:
+              switch.is_off: display_boot_page
+            then:
+              - display.page.show_next: oled
+              - component.update: oled
+
+interval:
+  # https://esphome.io/components/interval.html
+  - interval: 15s
+    startup_delay: 1s
+    # Automatically increment page every fifteen seconds
+    then:
+      if:
+        # Show boot screen for first <interval> seconds
+        condition:
+          switch.is_on: display_boot_page
+        then:
+          - display.page.show: page_boot
+          - switch.turn_off: display_boot_page
+        else:
+          # Change page on display
+          - display.page.show_next: oled
+          - component.update: oled
+      
